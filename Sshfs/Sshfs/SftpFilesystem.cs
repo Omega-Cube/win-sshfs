@@ -74,6 +74,11 @@ namespace Sshfs
 
         private readonly string _volumeLabel;
 
+        /// <summary>
+        /// Holds a list of the files that should be removed on close
+        /// </summary>
+        private List<string> _deleteOnCloseFiles;
+
         #endregion
 
         #region Constructors
@@ -89,6 +94,8 @@ namespace Sshfs
             _useOfflineAttribute = useOfflineAttribute;
             _debugMode = debugMode;
             _volumeLabel = label ?? String.Format("{0} on '{1}'", ConnectionInfo.Username, ConnectionInfo.Host);
+
+            _deleteOnCloseFiles = new List<string>();
         }
 
         #endregion
@@ -240,12 +247,15 @@ namespace Sshfs
                 if (sftpFileAttributes != null)
                     _cache.Add(path, sftpFileAttributes, DateTimeOffset.UtcNow.AddSeconds(_attributeCacheTimeout));
             }
-           
-         
-
 
             Log("Open| Name:{0},\n Mode:{1},\n Share{2},\n Disp:{3},\n Flags{4},\n Attr:{5}\n", fileName, access,
                 share, mode, options, attributes);
+
+            // Check if FILE_FLAG_DELETE_ON_CLOSE is set
+            if((options &= FileOptions.DeleteOnClose) != 0)
+            {
+                _deleteOnCloseFiles.Add(fileName);
+            }
 
             switch (mode)
             {
@@ -375,7 +385,9 @@ namespace Sshfs
                 info.Context = null;
             }
 
-            if (info.DeleteOnClose)
+            bool deleteOnCloseFromCreate = _deleteOnCloseFiles.Contains(fileName);
+
+            if (info.DeleteOnClose || deleteOnCloseFromCreate)
             {
                 string path = GetUnixPath(fileName);
                 if (info.IsDirectory)
@@ -395,6 +407,9 @@ namespace Sshfs
                 }
                 InvalidateParentCache(fileName);
                 _cache.Remove(path);
+
+                if (deleteOnCloseFromCreate)
+                    _deleteOnCloseFiles.Remove(fileName);
             }
 
             return DokanError.ErrorSuccess;
